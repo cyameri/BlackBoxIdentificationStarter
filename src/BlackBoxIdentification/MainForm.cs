@@ -21,6 +21,8 @@ public sealed class MainForm : Form
     private readonly FormsPlot _plotSignals = new();
     private readonly FormsPlot _plotModel = new();
     private readonly FormsPlot _plotResidual = new();
+    private readonly FormsPlot _plotKernel1 = new();
+    private readonly FormsPlot _plotKernel2Diagonal = new();
 
     private readonly NumericUpDown _memoryLength = new();
     private readonly NumericUpDown _linearOrder = new();
@@ -99,10 +101,10 @@ public sealed class MainForm : Form
         _method.SelectedItem = IdentificationMethod.Collocation.ToString();
 
         AddSettingRow(table, 0, "Метод:", _method);
-        AddSettingRow(table, 1, "Длина памяти L:", _memoryLength);
-        AddSettingRow(table, 2, "Порядок K1 m1:", _linearOrder);
-        AddSettingRow(table, 3, "Порядок K2 m2:", _quadraticOrder);
-        AddSettingRow(table, 4, "Точек/узлов:", _collocationNodes);
+        AddSettingRow(table, 1, "Длина памяти L, отсчётов:", _memoryLength);
+        AddSettingRow(table, 2, "Порядок аппроксимации K1, m1:", _linearOrder);
+        AddSettingRow(table, 3, "Порядок аппроксимации K2, m2:", _quadraticOrder);
+        AddSettingRow(table, 4, "Количество точек/узлов N:", _collocationNodes);
 
         var btnRun = new Button { Text = "Рассчитать", Dock = DockStyle.Fill, Height = 34 };
         btnRun.Click += (_, _) => RunIdentification();
@@ -119,6 +121,7 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(BuildDataTab());
         tabs.TabPages.Add(BuildPlotsTab());
         tabs.TabPages.Add(BuildCoefficientsTab());
+        tabs.TabPages.Add(BuildKernelsTab());
     }
 
     private static void AddSettingRow(TableLayoutPanel table, int row, string label, Control control)
@@ -190,6 +193,30 @@ public sealed class MainForm : Form
         split.Panel1.Controls.Add(_coeffA); split.Panel2.Controls.Add(_coeffC); tab.Controls.Add(split); return tab;
     }
 
+    private TabPage BuildKernelsTab()
+    {
+        var tab = new TabPage("Ядра модели");
+
+        var resultTabs = new TabControl
+        {
+            Dock = DockStyle.Fill
+        };
+
+        var kernel1Tab = new TabPage("K1(s)");
+        _plotKernel1.Dock = DockStyle.Fill;
+        kernel1Tab.Controls.Add(_plotKernel1);
+
+        var kernel2Tab = new TabPage("K2(s, s)");
+        _plotKernel2Diagonal.Dock = DockStyle.Fill;
+        kernel2Tab.Controls.Add(_plotKernel2Diagonal);
+
+        resultTabs.TabPages.Add(kernel1Tab);
+        resultTabs.TabPages.Add(kernel2Tab);
+
+        tab.Controls.Add(resultTabs);
+        return tab;
+    }
+
     private void OpenExcel()
     {
         using var dialog = new OpenFileDialog { Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*", Title = "Выберите Excel-файл с колонками x(t), y(t)" };
@@ -197,7 +224,8 @@ public sealed class MainForm : Form
         try
         {
             _data = ExcelSignalReader.ReadTwoColumnFile(dialog.FileName);
-            BindData(); PlotInputSignals(); SetStatus($"Загружено точек: {_data.Count}. Файл: {Path.GetFileName(dialog.FileName)}");
+            _result = null;
+            BindData(); PlotInputSignals(); SetStatus($"Загружено точек: {_data.Count}. Файл: {Path.GetFileName(dialog.FileName)}. {GetDataInfo()}");
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Ошибка загрузки Excel", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
@@ -205,7 +233,8 @@ public sealed class MainForm : Form
     private void LoadDemoData()
     {
         _data = DemoDataGenerator.Generate();
-        BindData(); PlotInputSignals(); SetStatus($"Загружены демо-данные: {_data.Count} точек.");
+        _result = null;
+        BindData(); PlotInputSignals(); SetStatus($"Загружены демо-данные: {_data.Count} точек. {GetDataInfo()}");
     }
 
     private void RunIdentification()
@@ -223,9 +252,16 @@ public sealed class MainForm : Form
             };
             IIdentifier identifier = parameters.Method == IdentificationMethod.LeastSquares ? new LeastSquaresIdentifier() : new CollocationIdentifier();
             _result = identifier.Identify(_data, parameters);
-            BindCoefficients(); PlotResults(); SetStatus($"Расчёт выполнен. Метод: {parameters.Method}. Ошибка RMSE = {_result.Rmse:G6}");
+            BindCoefficients(); PlotResults(); PlotKernels(parameters);
+
+            int parameterCount = DesignMatrixBuilder.GetParameterCount(parameters);
+            SetStatus($"Расчёт выполнен. Метод: {parameters.Method}. Неизвестных коэффициентов: {parameterCount}. RMSE = {_result.Rmse:G6}; относительная ошибка = {_result.RelativeErrorPercent:G4}%; max|r| = {_result.MaxAbsoluteError:G6}");
         }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Ошибка расчёта", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        catch (Exception ex)
+        {
+            SetStatus($"Расчёт не выполнен: {ex.Message}");
+            MessageBox.Show(this, ex.Message, "Ошибка расчёта", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void SaveResults()
@@ -245,7 +281,13 @@ public sealed class MainForm : Form
     private void BindCoefficients()
     {
         if (_result is null) return;
-        _coeffA.DataSource = _result.LinearCoefficients.Select((v, i) => new { i, A = v }).ToList();
+
+        var linearRows = new[] { new { Коэффициент = "H0", Значение = _result.ConstantCoefficient } }
+            .Concat(_result.LinearCoefficients.Select((v, i) => new { Коэффициент = $"A[{i}]", Значение = v }))
+            .ToList();
+
+        _coeffA.DataSource = linearRows;
+
         _coeffC.DataSource = Enumerable.Range(0, _result.QuadraticCoefficients.GetLength(0))
             .SelectMany(i => Enumerable.Range(0, _result.QuadraticCoefficients.GetLength(1)).Select(j => new { i, j, C = _result.QuadraticCoefficients[i, j] })).ToList();
     }
@@ -257,7 +299,7 @@ public sealed class MainForm : Form
         _plotSignals.Plot.Clear();
         _plotSignals.Plot.Add.Scatter(t, _data.Input.ToArray()).LegendText = "x(t), вход";
         _plotSignals.Plot.Add.Scatter(t, _data.Output.ToArray()).LegendText = "y(t), выход";
-        _plotSignals.Plot.Title("Входной и выходной сигнал"); _plotSignals.Plot.XLabel("t"); _plotSignals.Plot.Legend.IsVisible = true; _plotSignals.Refresh();
+        _plotSignals.Plot.Title("Входной и выходной сигнал"); _plotSignals.Plot.XLabel("t"); _plotSignals.Plot.Legend.IsVisible = true; _plotSignals.Plot.Axes.AutoScale(); _plotSignals.Refresh();
     }
 
     private void PlotResults()
@@ -267,9 +309,89 @@ public sealed class MainForm : Form
         _plotModel.Plot.Clear();
         _plotModel.Plot.Add.Scatter(t, _data.Output.ToArray()).LegendText = "y(t)";
         _plotModel.Plot.Add.Scatter(t, _result.ModelOutput).LegendText = "ŷ(t)";
-        _plotModel.Plot.Title("Сравнение исходного и восстановленного выхода"); _plotModel.Plot.XLabel("t"); _plotModel.Plot.Legend.IsVisible = true; _plotModel.Refresh();
+        _plotModel.Plot.Title("Сравнение исходного и восстановленного выхода"); _plotModel.Plot.XLabel("t"); _plotModel.Plot.Legend.IsVisible = true; _plotModel.Plot.Axes.AutoScale(); _plotModel.Refresh();
         _plotResidual.Plot.Clear(); _plotResidual.Plot.Add.Scatter(t, _result.Residual);
-        _plotResidual.Plot.Title($"Невязка r(t) = y(t) - ŷ(t), RMSE = {_result.Rmse:G6}"); _plotResidual.Plot.XLabel("t"); _plotResidual.Refresh();
+        _plotResidual.Plot.Title($"Невязка r(t) = y(t) - ŷ(t), RMSE = {_result.Rmse:G6}, δ = {_result.RelativeErrorPercent:G4}%"); _plotResidual.Plot.XLabel("t"); _plotResidual.Plot.Axes.AutoScale(); _plotResidual.Refresh();
+    }
+
+    private void PlotKernels(IdentificationParameters parameters)
+    {
+        if (_result is null || _data is null) return;
+
+        double[] time = _data.Time.ToArray();
+        double step = DesignMatrixBuilder.EstimateStep(time);
+        double memoryInterval = Math.Max(step, parameters.MemoryLength * step);
+        int pointCount = Math.Max(50, parameters.MemoryLength + 1);
+
+        var sValues = Enumerable.Range(0, pointCount)
+            .Select(i => memoryInterval * i / (double)Math.Max(1, pointCount - 1))
+            .ToArray();
+
+        var k1Values = sValues.Select(s => EvaluateK1(parameters, s, memoryInterval)).ToArray();
+        var k2DiagonalValues = sValues.Select(s => EvaluateK2(parameters, s, s, memoryInterval)).ToArray();
+
+        _plotKernel1.Plot.Clear();
+        _plotKernel1.Plot.Add.Scatter(sValues, k1Values);
+        _plotKernel1.Plot.Title("Идентифицированное ядро первого порядка K1(s)");
+        _plotKernel1.Plot.XLabel("s");
+        _plotKernel1.Plot.YLabel("K1(s)");
+        _plotKernel1.Plot.Axes.AutoScale();
+        _plotKernel1.Refresh();
+
+        _plotKernel2Diagonal.Plot.Clear();
+        _plotKernel2Diagonal.Plot.Add.Scatter(sValues, k2DiagonalValues);
+        _plotKernel2Diagonal.Plot.Title("Сечение ядра второго порядка K2(s, s)");
+        _plotKernel2Diagonal.Plot.XLabel("s");
+        _plotKernel2Diagonal.Plot.YLabel("K2(s, s)");
+        _plotKernel2Diagonal.Plot.Axes.AutoScale();
+        _plotKernel2Diagonal.Refresh();
+    }
+
+    private double EvaluateK1(IdentificationParameters parameters, double s, double memoryInterval)
+    {
+        if (_result is null) return 0.0;
+
+        double z = ChebyshevBasis.MapToMinusOneOne(s, memoryInterval);
+        double value = 0.0;
+
+        for (int i = 0; i < parameters.LinearOrder; i++)
+            value += _result.LinearCoefficients[i] * ChebyshevBasis.T(i, z);
+
+        return value;
+    }
+
+    private double EvaluateK2(IdentificationParameters parameters, double s1, double s2, double memoryInterval)
+    {
+        if (_result is null) return 0.0;
+
+        double z1 = ChebyshevBasis.MapToMinusOneOne(s1, memoryInterval);
+        double z2 = ChebyshevBasis.MapToMinusOneOne(s2, memoryInterval);
+        double value = 0.0;
+
+        for (int i = 0; i < parameters.QuadraticOrder; i++)
+        {
+            double ti = ChebyshevBasis.T(i, z1);
+
+            for (int j = 0; j < parameters.QuadraticOrder; j++)
+            {
+                double tj = ChebyshevBasis.T(j, z2);
+                value += _result.QuadraticCoefficients[i, j] * ti * tj;
+            }
+        }
+
+        return value;
+    }
+
+    private string GetDataInfo()
+    {
+        if (_data is null || _data.Count < 2)
+            return string.Empty;
+
+        double t0 = _data.Points[0].Time;
+        double t1 = _data.Points[_data.Count - 1].Time;
+        double h = _data.Points[1].Time - _data.Points[0].Time;
+
+        return $"Интервал: [{t0:G4}; {t1:G4}], шаг h ≈ {h:G4}.";
     }
 
     private void InitializeComponent()
