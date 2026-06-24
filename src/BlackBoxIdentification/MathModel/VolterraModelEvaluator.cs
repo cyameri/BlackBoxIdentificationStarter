@@ -4,27 +4,36 @@ namespace BlackBoxIdentification.MathModel;
 
 public static class VolterraModelEvaluator
 {
-    public static double[] Evaluate(SignalData data, IdentificationParameters p, double h0, double[] a, double[,] c)
+    public static double[] Evaluate(
+        SignalData data,
+        IdentificationParameters parameters,
+        double[] linearCoefficients,
+        double[,] quadraticCoefficients)
     {
         var output = new double[data.Count];
+        var interpolator = new SignalInterpolator(data);
 
-        for (int n = 0; n < data.Count; n++)
+        for (int pointIndex = 0; pointIndex < data.Count; pointIndex++)
         {
-            double[] features = DesignMatrixBuilder.BuildFeatureVector(data, p, n);
+            double time = data.Points[pointIndex].Time;
+            double[] features = DesignMatrixBuilder.BuildFeatureVectorAtTime(
+                interpolator,
+                parameters,
+                time);
 
-            double value = h0 * features[0];
-            int column = 1;
+            int column = 0;
+            double value = 0.0;
 
-            for (int i = 0; i < a.Length; i++)
-                value += a[i] * features[column++];
+            for (int i = 0; i < linearCoefficients.Length; i++)
+                value += linearCoefficients[i] * features[column++];
 
-            for (int i = 0; i < c.GetLength(0); i++)
+            for (int i = 0; i < quadraticCoefficients.GetLength(0); i++)
             {
-                for (int j = 0; j < c.GetLength(1); j++)
-                    value += c[i, j] * features[column++];
+                for (int j = 0; j < quadraticCoefficients.GetLength(1); j++)
+                    value += quadraticCoefficients[i, j] * features[column++];
             }
 
-            output[n] = value;
+            output[pointIndex] = value;
         }
 
         return output;

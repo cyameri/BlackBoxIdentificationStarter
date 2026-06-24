@@ -6,68 +6,88 @@ namespace BlackBoxIdentification.MathModel;
 
 public static class ResultFactory
 {
-    public static IdentificationResult Create(SignalData data, IdentificationParameters p, double[] solution)
+    public static IdentificationResult Create(
+        SignalData originalData,
+        SignalData calculationData,
+        IdentificationParameters parameters,
+        double[] solution,
+        SignalNormalizationInfo normalization,
+        int equationCount)
     {
         MathValidation.EnsureFinite(solution, "вектор коэффициентов");
 
-        int expected = DesignMatrixBuilder.GetParameterCount(p);
+        int expected = parameters.ParameterCount;
         if (solution.Length != expected)
-            throw new InvalidOperationException($"Размер вектора коэффициентов не соответствует модели. Ожидалось {expected}, получено {solution.Length}.");
-
-        double h0 = solution[0];
-        var a = solution.Skip(1).Take(p.LinearOrder).ToArray();
-        var c = new double[p.QuadraticOrder, p.QuadraticOrder];
-
-        int k = 1 + p.LinearOrder;
-        for (int i = 0; i < p.QuadraticOrder; i++)
         {
-            for (int j = 0; j < p.QuadraticOrder; j++)
-                c[i, j] = solution[k++];
+            throw new InvalidOperationException(
+                $"Размер решения не соответствует модели. Ожидалось {expected}, получено {solution.Length}.");
         }
 
-        var modelOutput = VolterraModelEvaluator.Evaluate(data, p, h0, a, c);
-        MathValidation.EnsureFinite(modelOutput, "восстановленный выходной сигнал");
+        double[] linear = solution
+            .Take(parameters.FirstKernelBasisCount)
+            .ToArray();
 
-        var residual = new double[data.Count];
+        var quadratic = new double[
+            parameters.SecondKernelBasisCountS1,
+            parameters.SecondKernelBasisCountS2];
+
+        int index = parameters.FirstKernelBasisCount;
+        for (int i = 0; i < parameters.SecondKernelBasisCountS1; i++)
+        {
+            for (int j = 0; j < parameters.SecondKernelBasisCountS2; j++)
+                quadratic[i, j] = solution[index++];
+        }
+
+        double[] calculatedOutput = VolterraModelEvaluator.Evaluate(
+            calculationData,
+            parameters,
+            linear,
+            quadratic);
+
+        MathValidation.EnsureFinite(calculatedOutput, "восстановленный выход");
+
+        var modelOutput = new double[originalData.Count];
+        var residual = new double[originalData.Count];
 
         double sumSquares = 0.0;
-        double outputNormSquares = 0.0;
+        double outputSquares = 0.0;
         double maxAbsoluteError = 0.0;
 
-        for (int i = 0; i < data.Count; i++)
+        for (int i = 0; i < originalData.Count; i++)
         {
-            double y = data.Points[i].Output;
-            residual[i] = y - modelOutput[i];
+            modelOutput[i] = SignalNormalizer.RestoreOutput(calculatedOutput[i], normalization);
+            double actual = originalData.Points[i].Output;
+            residual[i] = actual - modelOutput[i];
 
-            if (!MathValidation.IsFinite(residual[i]))
-                throw new InvalidOperationException("При расчете невязки получено некорректное значение.");
-
-            double abs = Math.Abs(residual[i]);
-            if (abs > maxAbsoluteError)
-                maxAbsoluteError = abs;
+            double absolute = Math.Abs(residual[i]);
+            if (absolute > maxAbsoluteError)
+                maxAbsoluteError = absolute;
 
             sumSquares += residual[i] * residual[i];
-            outputNormSquares += y * y;
+            outputSquares += actual * actual;
         }
 
-        double rmse = Math.Sqrt(sumSquares / data.Count);
-        double relative = outputNormSquares > 0
-            ? Math.Sqrt(sumSquares / outputNormSquares) * 100.0
+        double rmse = Math.Sqrt(sumSquares / originalData.Count);
+        double relative = outputSquares > 1e-14
+            ? Math.Sqrt(sumSquares / outputSquares) * 100.0
             : 0.0;
-
-        if (!MathValidation.IsFinite(rmse) || !MathValidation.IsFinite(relative) || !MathValidation.IsFinite(maxAbsoluteError))
-            throw new InvalidOperationException("Не удалось корректно рассчитать показатели ошибки.");
 
         return new IdentificationResult
         {
-            ConstantCoefficient = h0,
-            LinearCoefficients = a,
-            QuadraticCoefficients = c,
+            LinearCoefficients = linear,
+            QuadraticCoefficients = quadratic,
             ModelOutput = modelOutput,
             Residual = residual,
             Rmse = rmse,
             RelativeErrorPercent = relative,
-            MaxAbsoluteError = maxAbsoluteError
+            MaxAbsoluteError = maxAbsoluteError,
+            ParameterCount = parameters.ParameterCount,
+            EquationCount = equationCount,
+            IsNormalized = normalization.Enabled,
+            InputMean = normalization.InputMean,
+            InputScale = normalization.InputScale,
+            OutputMean = normalization.OutputMean,
+            OutputScale = normalization.OutputScale
         };
     }
 }

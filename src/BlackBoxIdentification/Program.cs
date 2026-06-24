@@ -13,11 +13,11 @@ internal static class Program
             ApplicationConfiguration.Initialize();
             Application.Run(new MainForm());
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
             MessageBox.Show(
-                ex.ToString(),
-                "Ошибка при запуске приложения",
+                exception.ToString(),
+                "РћС€РёР±РєР° РїСЂРё Р·Р°РїСѓСЃРєРµ РїСЂРёР»РѕР¶РµРЅРёСЏ",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }

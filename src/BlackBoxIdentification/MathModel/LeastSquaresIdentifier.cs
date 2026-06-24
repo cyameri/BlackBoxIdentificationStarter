@@ -6,13 +6,22 @@ public sealed class LeastSquaresIdentifier : IIdentifier
 {
     public IdentificationResult Identify(SignalData data, IdentificationParameters parameters)
     {
-        int[] sampleIndexes = DesignMatrixBuilder.SelectLeastSquaresIndexes(data, parameters);
-        var (matrix, target, _) = DesignMatrixBuilder.Build(data, parameters, sampleIndexes);
+        SignalData unitTimeData = SignalPreprocessor.NormalizeTimeToUnitInterval(data);
+        NormalizedSignalData normalized = SignalNormalizer.NormalizeForIdentification(
+            unitTimeData,
+            parameters.NormalizeSignals);
 
-        // Малое регуляризирующее слагаемое стабилизирует решение при близких
-        // или зависимых столбцах матрицы.
-        var solution = LinearAlgebra.SolveLeastSquares(matrix, target, regularization: 1e-8);
+        double[] sampleTimes = DesignMatrixBuilder.GetLeastSquaresTimes(normalized.Data, parameters);
+        var (matrix, target, _) = DesignMatrixBuilder.Build(normalized.Data, parameters, sampleTimes);
 
-        return ResultFactory.Create(data, parameters, solution);
+        double[] solution = LinearAlgebra.SolveLeastSquares(matrix, target, regularization: 1e-8);
+
+        return ResultFactory.Create(
+            unitTimeData,
+            normalized.Data,
+            parameters,
+            solution,
+            normalized.Info,
+            sampleTimes.Length);
     }
 }

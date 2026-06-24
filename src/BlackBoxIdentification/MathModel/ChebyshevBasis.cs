@@ -5,42 +5,32 @@ namespace BlackBoxIdentification.MathModel;
 public static class ChebyshevBasis
 {
     /// <summary>
-    /// Chebyshev polynomial of the first kind T_n(z), where z belongs to [-1; 1].
+    /// Многочлен Чебышева первого рода T_n(x).
+    /// В Maple-файлах используется orthopoly[T](n, x) непосредственно на x in [0, 1].
     /// </summary>
-    public static double T(int n, double z)
+    public static double T(int n, double x)
     {
         if (n < 0)
             throw new ArgumentOutOfRangeException(nameof(n));
 
-        z = Math.Clamp(z, -1.0, 1.0);
+        x = Math.Clamp(x, -1.0, 1.0);
 
         if (n == 0)
             return 1.0;
 
         if (n == 1)
-            return z;
+            return x;
 
         double t0 = 1.0;
-        double t1 = z;
+        double t1 = x;
 
         for (int k = 2; k <= n; k++)
         {
-            double t2 = 2.0 * z * t1 - t0;
+            double t2 = 2.0 * x * t1 - t0;
             t0 = t1;
             t1 = t2;
         }
 
         return t1;
-    }
-
-    /// <summary>
-    /// Maps s from [0; intervalLength] to z from [-1; 1].
-    /// </summary>
-    public static double MapToMinusOneOne(double s, double intervalLength)
-    {
-        if (intervalLength <= 0)
-            return 0.0;
-
-        return 2.0 * s / intervalLength - 1.0;
     }
 }

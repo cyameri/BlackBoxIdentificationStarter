@@ -6,14 +6,24 @@ public sealed class CollocationIdentifier : IIdentifier
 {
     public IdentificationResult Identify(SignalData data, IdentificationParameters parameters)
     {
-        int[] sampleIndexes = DesignMatrixBuilder.SelectCollocationIndexes(data, parameters);
-        var (matrix, target, _) = DesignMatrixBuilder.Build(data, parameters, sampleIndexes);
+        SignalData unitTimeData = SignalPreprocessor.NormalizeTimeToUnitInterval(data);
+        NormalizedSignalData normalized = SignalNormalizer.NormalizeForIdentification(
+            unitTimeData,
+            parameters.NormalizeSignals);
 
-        // Коллокационная система может быть плохо обусловленной, поэтому решаем ее
-        // стабилизированным способом. Если пользователь задаст N равным числу неизвестных,
-        // получится близкая к классической квадратная постановка.
-        var solution = LinearAlgebra.SolveSquareSystem(matrix, target, regularization: 1e-6);
+        double[] nodes = DesignMatrixBuilder.GetCollocationTimes(parameters);
+        var (matrix, target, _) = DesignMatrixBuilder.Build(normalized.Data, parameters, nodes);
 
-        return ResultFactory.Create(data, parameters, solution);
+        // Классическая коллокация: число уравнений равно числу неизвестных.
+        // SVD используется только как численно устойчивый способ решения квадратной системы.
+        double[] solution = LinearAlgebra.SolveSquareSystem(matrix, target);
+
+        return ResultFactory.Create(
+            unitTimeData,
+            normalized.Data,
+            parameters,
+            solution,
+            normalized.Info,
+            nodes.Length);
     }
 }
